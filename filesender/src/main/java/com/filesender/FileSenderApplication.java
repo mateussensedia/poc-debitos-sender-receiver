@@ -1,5 +1,7 @@
 package com.filesender;
 
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.CommandLineRunner;
@@ -10,19 +12,16 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.client.RestTemplate;
 
-import java.io.ByteArrayOutputStream;
 import java.io.File;
-import java.io.FileInputStream;
 import java.io.IOException;
-import java.nio.file.Files;
-import java.util.zip.GZIPOutputStream;
+import java.util.List;
 
 @SpringBootApplication
 public class FileSenderApplication implements CommandLineRunner {
 
 	private static final Logger logger = LoggerFactory.getLogger(FileSenderApplication.class);
 	private static final String FILE_PATH = "data.json";
-	private static final String URL = "http://localhost:8081/upload";
+	private static final String PROCESS_URL = "http://localhost:8081/process";
 
 	public static void main(String[] args) {
 		SpringApplication.run(FileSenderApplication.class, args);
@@ -30,50 +29,33 @@ public class FileSenderApplication implements CommandLineRunner {
 
 	@Override
 	public void run(String... args) throws Exception {
+		logger.info("Starting file-based microservice communication");
+		sendJsonData();
+	}
+
+	private void sendJsonData() throws IOException {
+		RestTemplate restTemplate = new RestTemplate();
+		ObjectMapper objectMapper = new ObjectMapper();
+
 		File file = new File(FILE_PATH);
 		if (!file.exists()) {
-			String sampleJson = "{\"name\":\"Test\",\"value\":123}";
-			Files.write(file.toPath(), sampleJson.getBytes());
+			logger.error("File {} does not exist!", FILE_PATH);
+			return;
 		}
 
-		logger.info("Reading and compressing JSON file: {}", FILE_PATH);
-		byte[] gzippedData = compressFile(file);
-		long startTime = System.currentTimeMillis();
-		logger.info("Sending compressed JSON file to Microservice B");
-		String response = sendFile(gzippedData);
-		long endTime = System.currentTimeMillis();
-		logger.info("Response from Microservice B: {}", response);
-		logger.info("Total time taken: {} ms", (endTime - startTime));
-	}
+		logger.info("Reading JSON file for processing request");
+		List<Object> jsonData = objectMapper.readValue(file, new TypeReference<>() {});
 
-	private byte[] compressFile(File file) throws IOException {
-		try (FileInputStream fis = new FileInputStream(file);
-			 ByteArrayOutputStream baos = new ByteArrayOutputStream();
-			 GZIPOutputStream gos = new GZIPOutputStream(baos)) {
-
-			byte[] buffer = new byte[1024];
-			int len;
-			while ((len = fis.read(buffer)) != -1) {
-				gos.write(buffer, 0, len);
-			}
-			gos.finish();
-			logger.info("JSON file compression completed successfully");
-			return baos.toByteArray();
-		}
-	}
-
-	private String sendFile(byte[] gzippedData) {
-		RestTemplate restTemplate = new RestTemplate();
 		HttpHeaders headers = new HttpHeaders();
-		headers.add("Content-Type", "application/gzip");
-		HttpEntity<byte[]> requestEntity = new HttpEntity<>(gzippedData, headers);
+		headers.add("Content-Type", "application/json");
+		HttpEntity<List<Object>> requestEntity = new HttpEntity<>(jsonData, headers);
 
-		try {
-			ResponseEntity<String> response = restTemplate.postForEntity(URL, requestEntity, String.class);
-			return response.getBody();
-		} catch (Exception e) {
-			logger.error("Error sending JSON file to Microservice B", e);
-			return "ERROR";
-		}
+		logger.info("Sending JSON data to Microservice B");
+		long startTime = System.currentTimeMillis();
+		ResponseEntity<String> response = restTemplate.postForEntity(PROCESS_URL, requestEntity, String.class);
+		long endTime = System.currentTimeMillis();
+
+		logger.info("Response from Microservice B: {}", response.getBody());
+		logger.info("Total time taken for sending data: {} ms", (endTime - startTime));
 	}
 }
